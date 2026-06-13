@@ -1,12 +1,12 @@
 import { useMemo, useState, useEffect } from "react";
-import { X, Stethoscope, Pill, Users, ArrowRight, AlertCircle, Sparkles, Brain, ChevronDown } from "lucide-react";
-import { useGameStore, guessDiseaseFromSymptoms } from "@/store/gameStore";
+import { X, Stethoscope, Pill, Users, ArrowRight, AlertCircle, Sparkles, Brain, ChevronDown, Heart, Zap } from "lucide-react";
+import { useGameStore, guessDiseaseFromSymptoms, SYNERGY_LEVEL_NAMES, SYNERGY_LEVEL_COLORS, getFatiguePenalty, getSynergyBonus } from "@/store/gameStore";
 import {
   BREEDS, HERBS, PRESCRIPTIONS,
   SEVERITY_NAMES, SEVERITY_COLORS, DISEASE_NAMES,
   ELEMENT_EMOJI, ELEMENT_NAMES,
 } from "@/data/gameData";
-import type { Bed, DiseaseType } from "@/types/game";
+import type { Bed, DiseaseType, StaffPairRecord } from "@/types/game";
 
 interface TreatmentModalProps {
   open: boolean;
@@ -27,10 +27,11 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
   const queue = useGameStore(s => s.waitingQueue);
   const inventory = useGameStore(s => s.inventory);
   const staff = useGameStore(s => s.staff);
+  const staffPairs = useGameStore(s => s.staffPairs);
   const assignBedAndTreat = useGameStore(s => s.assignBedAndTreat);
 
   const [selectedHerbs, setSelectedHerbs] = useState<string[]>([]);
-  const [selectedStaff, setSelectedStaff] = useState<string | null>(null);
+  const [selectedStaff, setSelectedStaff] = useState<string[]>([]);
   const [playerDiagnosis, setPlayerDiagnosis] = useState<DiseaseType | null>(null);
   const [showAllDiseases, setShowAllDiseases] = useState(false);
 
@@ -38,12 +39,25 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
   const breed = beast ? BREEDS.find(b => b.id === beast.breedId) : null;
   const idleStaff = useMemo(() => staff.filter(s => s.status === "idle"), [staff]);
 
+  const pairInfo: StaffPairRecord | null = useMemo(() => {
+    if (selectedStaff.length < 2) return null;
+    const pairId = [...selectedStaff].sort().join("|");
+    return staffPairs[pairId] ?? null;
+  }, [selectedStaff, staffPairs]);
+
+  const synergyPreview = useMemo(() => {
+    if (!pairInfo) return null;
+    const bonus = getSynergyBonus(pairInfo.synergyPoints);
+    const penalty = getFatiguePenalty(pairInfo.fatigue);
+    return { bonus, penalty, total: bonus + penalty };
+  }, [pairInfo]);
+
   const suspectedDiseases = useMemo(() => {
     if (!beast) return [];
     return guessDiseaseFromSymptoms(beast.symptoms);
   }, [beast]);
 
-  const topSuspects = useMemo(() => showAllDiseases ? suspectedDiseases : suspectedDiseases.slice(0, 3), [suspectedDiseases, showAllDiseases]);
+  const topSuspects = useMemo(() => showAllDiseases ? suspectedDiseases : suspectedDiseases.slice(0, 3), [suspectedDiseases]);
 
   const recommendedPrescription = useMemo(() => {
     if (!playerDiagnosis) return null;
@@ -53,7 +67,7 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
   useEffect(() => {
     if (open) {
       setSelectedHerbs([]);
-      setSelectedStaff(null);
+      setSelectedStaff([]);
       setPlayerDiagnosis(null);
       setShowAllDiseases(false);
     }
@@ -78,6 +92,14 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
 
   const selectDiagnosis = (disease: DiseaseType) => {
     setPlayerDiagnosis(prev => prev === disease ? null : disease);
+  };
+
+  const toggleStaff = (staffId: string) => {
+    setSelectedStaff(prev => {
+      if (prev.includes(staffId)) return prev.filter(id => id !== staffId);
+      if (prev.length >= 2) return prev;
+      return [...prev, staffId];
+    });
   };
 
   const herbsTotal = selectedHerbs.reduce((sum, id) => {
@@ -294,7 +316,7 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
               <Users className="w-4 h-4 text-clinic-light-jade" />
               护理员安排
               <span className="ml-auto text-[10px] text-gray-500">
-                加速 30% · 成功率 +5~10%
+                可选 1-2 人 · 双人搭档可触发默契加成
               </span>
             </div>
             <div className="grid grid-cols-2 gap-1.5">
@@ -304,22 +326,26 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
                 </div>
               )}
               {idleStaff.map(s => {
-                const sel = selectedStaff === s.id;
+                const sel = selectedStaff.includes(s.id);
+                const disabled = !targetBed || (!sel && selectedStaff.length >= 2);
                 return (
                   <button
                     key={s.id}
-                    onClick={() => setSelectedStaff(sel ? null : s.id)}
-                    disabled={!targetBed}
-                    className={`p-2 rounded-lg border text-left transition-all disabled:opacity-50 ${
+                    onClick={() => toggleStaff(s.id)}
+                    disabled={disabled}
+                    className={`p-2 rounded-lg border text-left transition-all ${
                       sel
                         ? "border-clinic-light-jade bg-clinic-light-jade/10 shadow-sm"
                         : "border-clinic-border/50 bg-white hover:border-clinic-light-jade/60"
-                    }`}
+                    } ${disabled && !sel ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     <div className="flex items-center gap-1.5">
                       <span className="text-xl">{s.emoji}</span>
                       <div className="min-w-0">
-                        <div className="text-xs font-semibold text-clinic-deep truncate">{s.name}</div>
+                        <div className="text-xs font-semibold text-clinic-deep truncate">
+                          {s.name}
+                          {sel && <span className="ml-1 text-clinic-light-jade">✓</span>}
+                        </div>
                         <div className="text-[9px] text-gray-500">Lv.{s.skillLevel}</div>
                       </div>
                     </div>
@@ -330,10 +356,10 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
                 );
               })}
               <button
-                onClick={() => setSelectedStaff(null)}
+                onClick={() => setSelectedStaff([])}
                 disabled={!targetBed}
                 className={`p-2 rounded-lg border border-dashed transition-all disabled:opacity-50 ${
-                  selectedStaff === null
+                  selectedStaff.length === 0
                     ? "border-gray-400 bg-gray-50"
                     : "border-clinic-border/50 bg-white hover:border-gray-400"
                 } flex flex-col items-center justify-center text-[10px] text-gray-500 hover:text-clinic-deep`}
@@ -342,6 +368,39 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
                 不分配
               </button>
             </div>
+
+            {pairInfo && (
+              <div className={`mt-2 p-2 rounded-lg border ${SYNERGY_LEVEL_COLORS[pairInfo.synergyLevel]}`}>
+                <div className="flex items-center gap-1.5 text-[11px] font-semibold mb-1">
+                  <Heart className="w-3.5 h-3.5" />
+                  搭档默契：{SYNERGY_LEVEL_NAMES[pairInfo.synergyLevel]}
+                  <span className="ml-auto text-[10px]">
+                    共诊 {pairInfo.totalTreatments} 次 · 成功率 {pairInfo.totalTreatments > 0 ? Math.round(pairInfo.successfulTreatments / pairInfo.totalTreatments * 100) : 0}%
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-[10px]">
+                  {synergyPreview && (
+                    <>
+                      <span className={synergyPreview.bonus > 0 ? "text-emerald-600" : "text-gray-500"}>
+                        🤝 默契 +{synergyPreview.bonus}%
+                      </span>
+                      <span className={synergyPreview.penalty < 0 ? "text-clinic-crisis" : "text-gray-500"}>
+                        <Zap className="w-3 h-3 inline" /> 疲劳 {synergyPreview.penalty}%
+                      </span>
+                      <span className={`ml-auto font-semibold ${synergyPreview.total > 0 ? "text-emerald-600" : synergyPreview.total < 0 ? "text-clinic-crisis" : "text-gray-500"}`}>
+                        合计 {synergyPreview.total > 0 ? "+" : ""}{synergyPreview.total}%
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {selectedStaff.length >= 2 && !pairInfo && (
+              <div className="mt-2 p-2 rounded-lg border border-gray-200 bg-gray-50 text-[10px] text-gray-500">
+                🆕 新搭档组合，共同治疗后将建立默契关系
+              </div>
+            )}
           </div>
         </div>
 
@@ -359,12 +418,17 @@ export function TreatmentModal({ open, onClose, targetBed }: TreatmentModalProps
             <span className="text-clinic-deep font-semibold tabular-nums ml-auto">
               💊 {herbsTotal} 金
             </span>
-            {selectedStaff && (
+            {selectedStaff.length > 0 && (
               <>
                 <span className="text-gray-300">·</span>
                 <div className="text-gray-600 text-[11px]">
-                  👩‍⚕️ {staff.find(s => s.id === selectedStaff)?.name}
+                  👩‍⚕️ {selectedStaff.map(id => staff.find(s => s.id === id)?.name).filter(Boolean).join("+")}
                 </div>
+                {synergyPreview && synergyPreview.total !== 0 && (
+                  <span className={`text-[10px] font-semibold ${synergyPreview.total > 0 ? "text-emerald-600" : "text-clinic-crisis"}`}>
+                    默契{synergyPreview.total > 0 ? "+" : ""}{synergyPreview.total}%
+                  </span>
+                )}
               </>
             )}
           </div>

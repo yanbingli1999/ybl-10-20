@@ -13,6 +13,10 @@ import type {
   WeatherType,
   Prescription,
   TreatmentResult,
+  StaffPairRecord,
+  PairSynergyLevel,
+  StaffBreedExperience,
+  StaffDiseaseExperience,
 } from "@/types/game";
 import {
   BREEDS,
@@ -83,9 +87,201 @@ export function generateRandomBeast(day: number, time: number): Beast {
   };
 }
 
-function calcTreatmentHours(severity: Severity, staffBoost: boolean): number {
+function calcTreatmentHours(severity: Severity, staffCount: number): number {
   const base = SEVERITIES.find(s => s.sev === severity)?.hours ?? 8;
-  return staffBoost ? Math.ceil(base * 0.7) : base;
+  if (staffCount === 0) return base;
+  if (staffCount === 1) return Math.ceil(base * 0.7);
+  return Math.ceil(base * 0.55);
+}
+
+function getPairId(aId: string, bId: string): string {
+  return [aId, bId].sort().join("|");
+}
+
+const SYNERGY_THRESHOLDS: { level: PairSynergyLevel; points: number; bonus: number }[] = [
+  { level: "stranger", points: 0, bonus: 0 },
+  { level: "acquaintance", points: 5, bonus: 3 },
+  { level: "partner", points: 15, bonus: 7 },
+  { level: "veteran", points: 35, bonus: 12 },
+  { level: "legend", points: 70, bonus: 20 },
+];
+
+export const SYNERGY_LEVEL_NAMES: Record<PairSynergyLevel, string> = {
+  stranger: "陌生",
+  acquaintance: "相识",
+  partner: "搭档",
+  veteran: "默契老手",
+  legend: "黄金搭档",
+};
+
+export const SYNERGY_LEVEL_COLORS: Record<PairSynergyLevel, string> = {
+  stranger: "bg-gray-100 text-gray-600 border-gray-300",
+  acquaintance: "bg-blue-50 text-blue-600 border-blue-300",
+  partner: "bg-emerald-50 text-emerald-600 border-emerald-300",
+  veteran: "bg-purple-50 text-purple-600 border-purple-300",
+  legend: "bg-amber-50 text-amber-600 border-amber-400",
+};
+
+export const SYNERGY_TAGS: Record<string, {
+  name: string;
+  description: string;
+  icon: string;
+  rarity: "common" | "rare" | "epic" | "legendary";
+  bonus: number;
+  check: (pair: StaffPairRecord) => boolean;
+}> = {
+  frequent_partners: {
+    name: "老搭档",
+    description: "共同治疗超过20次",
+    icon: "🤝",
+    rarity: "common",
+    bonus: 2,
+    check: (p) => p.totalTreatments >= 20,
+  },
+  perfect_record: {
+    name: "常胜组合",
+    description: "连续10次治疗成功",
+    icon: "🏆",
+    rarity: "rare",
+    bonus: 5,
+    check: (p) => p.totalTreatments >= 10 && p.successfulTreatments === p.totalTreatments,
+  },
+  fox_specialists: {
+    name: "灵狐之友",
+    description: "治愈5只以上赤焰灵狐",
+    icon: "🦊",
+    rarity: "common",
+    bonus: 3,
+    check: (p) => (p.breedExperience["fox_fire"] || 0) >= 5,
+  },
+  dragon_specialists: {
+    name: "龙族守护者",
+    description: "治愈3只以上青鳞幼龙",
+    icon: "🐉",
+    rarity: "epic",
+    bonus: 8,
+    check: (p) => (p.breedExperience["dragon_water"] || 0) >= 3,
+  },
+  fever_experts: {
+    name: "退热圣手",
+    description: "治愈10例灵热症",
+    icon: "🌡️",
+    rarity: "common",
+    bonus: 3,
+    check: (p) => (p.diseaseExperience["fever"] || 0) >= 10,
+  },
+  curse_breakers: {
+    name: "破咒专家",
+    description: "治愈5例咒怨症",
+    icon: "✨",
+    rarity: "rare",
+    bonus: 6,
+    check: (p) => (p.diseaseExperience["curse"] || 0) >= 5,
+  },
+  mana_masters: {
+    name: "灵脉医师",
+    description: "治愈8例灵脉紊乱",
+    icon: "💫",
+    rarity: "rare",
+    bonus: 5,
+    check: (p) => (p.diseaseExperience["mana_disorder"] || 0) >= 8,
+  },
+  critical_saviors: {
+    name: "起死回生",
+    description: "成功治愈5例危重病例",
+    icon: "💖",
+    rarity: "epic",
+    bonus: 10,
+    check: (p) => p.synergyPoints >= 50 && p.totalTreatments >= 15,
+  },
+  legendary_duo: {
+    name: "黄金组合",
+    description: "默契达到传说级别",
+    icon: "👑",
+    rarity: "legendary",
+    bonus: 15,
+    check: (p) => p.synergyLevel === "legend",
+  },
+  veterans: {
+    name: "默契老手",
+    description: "共同治疗超过50次",
+    icon: "🎖️",
+    rarity: "epic",
+    bonus: 8,
+    check: (p) => p.totalTreatments >= 50,
+  },
+};
+
+export const TAG_RARITY_COLORS: Record<string, string> = {
+  common: "bg-gray-100 text-gray-700 border-gray-300",
+  rare: "bg-blue-100 text-blue-700 border-blue-400",
+  epic: "bg-purple-100 text-purple-700 border-purple-400",
+  legendary: "bg-gradient-to-r from-amber-100 to-orange-100 text-amber-700 border-amber-400",
+};
+
+export function getSynergyTagBonus(tagIds: string[]): number {
+  return tagIds.reduce((sum, id) => sum + (SYNERGY_TAGS[id]?.bonus || 0), 0);
+}
+
+function checkAndUnlockTags(pair: StaffPairRecord): string[] {
+  const unlocked = [...pair.synergyTags];
+  for (const [id, tag] of Object.entries(SYNERGY_TAGS)) {
+    if (!unlocked.includes(id) && tag.check(pair)) {
+      unlocked.push(id);
+    }
+  }
+  return unlocked;
+}
+
+function getSynergyLevel(points: number): PairSynergyLevel {
+  let level: PairSynergyLevel = "stranger";
+  for (const t of SYNERGY_THRESHOLDS) {
+    if (points >= t.points) level = t.level;
+  }
+  return level;
+}
+
+export function getSynergyBonus(points: number): number {
+  let bonus = 0;
+  for (const t of SYNERGY_THRESHOLDS) {
+    if (points >= t.points) bonus = t.bonus;
+  }
+  return bonus;
+}
+
+export function getFatiguePenalty(fatigue: number): number {
+  if (fatigue <= 2) return 0;
+  if (fatigue <= 4) return -3;
+  if (fatigue <= 6) return -7;
+  if (fatigue <= 8) return -12;
+  return -18;
+}
+
+function ensureStaffPair(
+  pairs: Record<string, StaffPairRecord>,
+  aId: string,
+  bId: string,
+  now: number
+): StaffPairRecord {
+  const pairId = getPairId(aId, bId);
+  if (pairs[pairId]) return pairs[pairId];
+  return {
+    pairId,
+    staffAId: aId,
+    staffBId: bId,
+    totalTreatments: 0,
+    successfulTreatments: 0,
+    consecutiveDays: 0,
+    fatigue: 0,
+    synergyLevel: "stranger",
+    synergyPoints: 0,
+    adaptedDiseases: [],
+    adaptedBreeds: [],
+    synergyTags: [],
+    breedExperience: {},
+    diseaseExperience: {} as Record<DiseaseType, number>,
+    lastTreatedAt: now,
+  };
 }
 
 export function guessDiseaseFromSymptoms(symptoms: string[]): { disease: DiseaseType; matchRate: number }[] {
@@ -119,6 +315,9 @@ export interface GameState {
   selectedBeastId: string | null;
   selectedBedId: string | null;
   lastBeastSpawn: number;
+  staffPairs: Record<string, StaffPairRecord>;
+  staffBreedExp: Record<string, Record<string, StaffBreedExperience>>;
+  staffDiseaseExp: Record<string, Record<DiseaseType, StaffDiseaseExperience>>;
 
   // Actions
   togglePause: () => void;
@@ -126,7 +325,7 @@ export interface GameState {
   selectBeast: (id: string | null) => void;
   selectBed: (id: string | null) => void;
   dismissBeast: (id: string) => void;
-  assignBedAndTreat: (beastId: string, bedId: string, staffId: string | null, herbIds: string[], playerDiagnosis: DiseaseType | null) => void;
+  assignBedAndTreat: (beastId: string, bedId: string, staffIds: string[], herbIds: string[], playerDiagnosis: DiseaseType | null) => void;
   purchaseHerb: (herbId: string, qty: number) => void;
   collectFromBed: (bedId: string) => void;
   addNotification: (type: Notification["type"], message: string) => void;
@@ -145,6 +344,7 @@ function createInitialBeds(): Bed[] {
     status: "empty",
     assignedBeastId: null,
     assignedStaffId: null,
+    assignedStaffIds: [],
     treatmentProgress: 0,
     treatmentTotal: 0,
     result: "pending",
@@ -182,6 +382,9 @@ function buildInitialState() {
     selectedBeastId: null,
     selectedBedId: null,
     lastBeastSpawn: 8,
+    staffPairs: {} as Record<string, StaffPairRecord>,
+    staffBreedExp: {} as Record<string, Record<string, StaffBreedExperience>>,
+    staffDiseaseExp: {} as Record<string, Record<DiseaseType, StaffDiseaseExperience>>,
   };
 }
 
@@ -256,7 +459,7 @@ export const useGameStore = create<GameState>()(
         get().addNotification("success", `采购 ${herb.name} x${qty}，花费${totalCost}金`);
       },
 
-      assignBedAndTreat: (beastId, bedId, staffId, herbIds, playerDiagnosis) => {
+      assignBedAndTreat: (beastId, bedId, staffIds, herbIds, playerDiagnosis) => {
         const s = get();
         const beast = s.waitingQueue.find(b => b.id === beastId);
         const bed = s.beds.find(b => b.id === bedId);
@@ -270,12 +473,14 @@ export const useGameStore = create<GameState>()(
             return;
           }
         }
-        if (staffId) {
-          const st = s.staff.find(x => x.id === staffId);
-          if (!st || st.status !== "idle") {
-            s.addNotification("error", "该护理员当前不可用");
-            return;
-          }
+        const validStaffIds: string[] = [];
+        for (const sid of staffIds) {
+          const st = s.staff.find(x => x.id === sid);
+          if (st && st.status === "idle") validStaffIds.push(sid);
+        }
+        if (staffIds.length > 0 && validStaffIds.length !== staffIds.length) {
+          s.addNotification("error", "部分护理员当前不可用");
+          return;
         }
 
         const newInventory = { ...s.inventory };
@@ -285,17 +490,15 @@ export const useGameStore = create<GameState>()(
           return sum + (h?.price ?? 0);
         }, 0);
 
-        const hasStaff = !!staffId;
-        const staffSkillBonus = staffId ? (s.staff.find(x => x.id === staffId)?.skillLevel ?? 1) * 5 : 0;
-        void staffSkillBonus;
-
-        const totalHours = calcTreatmentHours(beast.severity, hasStaff);
+        const primaryStaffId = validStaffIds[0] ?? null;
+        const totalHours = calcTreatmentHours(beast.severity, validStaffIds.length);
 
         const newBeds = s.beds.map(b => b.id === bedId ? {
           ...b,
           status: "occupied" as const,
           assignedBeastId: beastId,
-          assignedStaffId: staffId,
+          assignedStaffId: primaryStaffId,
+          assignedStaffIds: validStaffIds,
           treatmentProgress: 0,
           treatmentTotal: totalHours,
           result: "pending" as const,
@@ -313,7 +516,11 @@ export const useGameStore = create<GameState>()(
           },
         } : b);
 
-        const newStaff = s.staff.map(st => st.id === staffId ? { ...st, status: "working" as const, assignedBedId: bedId } : st);
+        const newStaff = s.staff.map(st =>
+          validStaffIds.includes(st.id)
+            ? { ...st, status: "working" as const, assignedBedId: bedId }
+            : st
+        );
 
         const newDiscovered = s.discoveredBreeds.includes(beast.breedId)
           ? s.discoveredBreeds : [...s.discoveredBreeds, beast.breedId];
@@ -328,7 +535,10 @@ export const useGameStore = create<GameState>()(
           selectedBeastId: null,
         }));
         get()._addTransaction("expense", "药材消耗", herbsCost, `${beast.name} 治疗消耗药材`);
-        get().addNotification("info", `${beast.name} 已入住 ${bed.name}，预计${totalHours}小时治疗`);
+        const staffMsg = validStaffIds.length > 0
+          ? `，护理员：${validStaffIds.map(id => s.staff.find(x => x.id === id)?.name).filter(Boolean).join("+")}`
+          : "";
+        get().addNotification("info", `${beast.name} 已入住 ${bed.name}，预计${totalHours}小时治疗${staffMsg}`);
       },
 
       collectFromBed: (bedId) => {
@@ -336,6 +546,8 @@ export const useGameStore = create<GameState>()(
         const bed = s.beds.find(b => b.id === bedId);
         if (!bed || bed.result === "pending" || !bed.beastSnapshot) return;
         const beast = bed.beastSnapshot;
+        const treatedStaffIds = bed.assignedStaffIds || (bed.assignedStaffId ? [bed.assignedStaffId] : []);
+        const isSuccess = bed.result === "success";
 
         const bedBeastId = bed.assignedBeastId;
         const treatmentHerbs = bed.currentPrescriptionHerbs;
@@ -347,12 +559,118 @@ export const useGameStore = create<GameState>()(
 
         const breed = BREEDS.find(b => b.id === (beast?.breedId || ""));
 
-        if (bed.result === "success" && beast && breed) {
+        let newStaffPairs = { ...s.staffPairs };
+        let newStaffBreedExp = { ...s.staffBreedExp };
+        let newStaffDiseaseExp = { ...s.staffDiseaseExp };
+
+        if (beast && treatedStaffIds.length > 0) {
+          for (const sid of treatedStaffIds) {
+            if (!newStaffBreedExp[sid]) newStaffBreedExp[sid] = {};
+            if (!newStaffBreedExp[sid][beast.breedId]) {
+              newStaffBreedExp[sid][beast.breedId] = { breedId: beast.breedId, treatments: 0, successes: 0 };
+            }
+            newStaffBreedExp[sid][beast.breedId] = {
+              ...newStaffBreedExp[sid][beast.breedId],
+              treatments: newStaffBreedExp[sid][beast.breedId].treatments + 1,
+              successes: newStaffBreedExp[sid][beast.breedId].successes + (isSuccess ? 1 : 0),
+            };
+
+            if (!newStaffDiseaseExp[sid]) newStaffDiseaseExp[sid] = {} as Record<DiseaseType, StaffDiseaseExperience>;
+            if (!newStaffDiseaseExp[sid][beast.disease]) {
+              newStaffDiseaseExp[sid][beast.disease] = { disease: beast.disease, treatments: 0, successes: 0 };
+            }
+            newStaffDiseaseExp[sid][beast.disease] = {
+              ...newStaffDiseaseExp[sid][beast.disease],
+              treatments: newStaffDiseaseExp[sid][beast.disease].treatments + 1,
+              successes: newStaffDiseaseExp[sid][beast.disease].successes + (isSuccess ? 1 : 0),
+            };
+          }
+
+          if (treatedStaffIds.length >= 2 && beast) {
+            for (let i = 0; i < treatedStaffIds.length; i++) {
+              for (let j = i + 1; j < treatedStaffIds.length; j++) {
+                const aId = treatedStaffIds[i];
+                const bId = treatedStaffIds[j];
+                const pair = ensureStaffPair(newStaffPairs, aId, bId, s.currentDay);
+                const newPoints = pair.synergyPoints + (isSuccess ? 3 : 1);
+                const adaptedDiseases = pair.adaptedDiseases.includes(beast.disease)
+                  ? pair.adaptedDiseases
+                  : [...pair.adaptedDiseases, beast.disease];
+                const adaptedBreeds = pair.adaptedBreeds.includes(beast.breedId)
+                  ? pair.adaptedBreeds
+                  : [...pair.adaptedBreeds, beast.breedId];
+
+                const newBreedExp = { ...pair.breedExperience };
+                newBreedExp[beast.breedId] = (newBreedExp[beast.breedId] || 0) + 1;
+
+                const newDiseaseExp = { ...pair.diseaseExperience };
+                newDiseaseExp[beast.disease] = (newDiseaseExp[beast.disease] || 0) + 1;
+
+                const updatedPair: StaffPairRecord = {
+                  ...pair,
+                  totalTreatments: pair.totalTreatments + 1,
+                  successfulTreatments: pair.successfulTreatments + (isSuccess ? 1 : 0),
+                  synergyPoints: newPoints,
+                  synergyLevel: getSynergyLevel(newPoints),
+                  fatigue: Math.min(10, pair.fatigue + 1),
+                  consecutiveDays: pair.consecutiveDays + 1,
+                  adaptedDiseases,
+                  adaptedBreeds,
+                  breedExperience: newBreedExp,
+                  diseaseExperience: newDiseaseExp as Record<DiseaseType, number>,
+                  lastTreatedAt: s.currentDay,
+                };
+
+                updatedPair.synergyTags = checkAndUnlockTags(updatedPair);
+
+                const oldTagCount = pair.synergyTags.length;
+                const newTagCount = updatedPair.synergyTags.length;
+                if (newTagCount > oldTagCount) {
+                  const newTags = updatedPair.synergyTags.slice(oldTagCount);
+                  const staffA = s.staff.find(x => x.id === aId)?.name || "?";
+                  const staffB = s.staff.find(x => x.id === bId)?.name || "?";
+                  newTags.forEach(tagId => {
+                    const tag = SYNERGY_TAGS[tagId];
+                    if (tag) {
+                      get().addNotification("success", `🎉 ${staffA} & ${staffB} 解锁默契标签：${tag.icon} ${tag.name}！加成+${tag.bonus}%`);
+                    }
+                  });
+                }
+
+                newStaffPairs[pair.pairId] = updatedPair;
+              }
+            }
+          }
+        }
+
+        if (isSuccess && beast && breed) {
           const severityMult = { mild: 1, moderate: 1.4, severe: 1.8, critical: 2.3 }[beast.severity] || 1;
           const satMult = beast.satisfaction / 100;
           const reputationBonus = s.reputation / 100;
-          const revenue = Math.floor(breed.baseFees * severityMult * (0.8 + 0.4 * satMult) * (1 + reputationBonus * 0.3));
-          let repGain = Math.ceil(3 * severityMult * satMult);
+
+          let pairBonus = 0;
+          if (treatedStaffIds.length >= 2) {
+            for (let i = 0; i < treatedStaffIds.length; i++) {
+              for (let j = i + 1; j < treatedStaffIds.length; j++) {
+                const pid = getPairId(treatedStaffIds[i], treatedStaffIds[j]);
+                const pair = newStaffPairs[pid];
+                if (pair) {
+                  const baseBonus = getSynergyBonus(pair.synergyPoints);
+                  pairBonus += baseBonus;
+                  if (beast.severity === "severe" || beast.severity === "critical") {
+                    pairBonus += baseBonus * 0.5;
+                  }
+                  pairBonus += getSynergyTagBonus(pair.synergyTags);
+                }
+              }
+            }
+          }
+
+          const revenue = Math.floor(
+            breed.baseFees * severityMult * (0.8 + 0.4 * satMult) * (1 + reputationBonus * 0.3)
+              + pairBonus * 2
+          );
+          let repGain = Math.ceil(3 * severityMult * satMult) + Math.floor(pairBonus / 5);
           const trustGain = Math.ceil(10 * severityMult * satMult);
 
           const diagnosisCorrect = bed.playerDiagnosis === beast.disease;
@@ -407,11 +725,15 @@ export const useGameStore = create<GameState>()(
             reputation: Math.min(100, st.reputation + repGain),
             beastRelationships: { ...st.beastRelationships, [breed.id]: newRel },
             medicalRecords: [record, ...st.medicalRecords],
+            staffPairs: newStaffPairs,
+            staffBreedExp: newStaffBreedExp,
+            staffDiseaseExp: newStaffDiseaseExp,
           }));
           get()._addTransaction("income", "诊金收入", revenue, `治愈 ${breed.name}·${beast.name}${evolved ? "(进化加成)" : ""}`);
           const evolveMsg = evolved ? " 🎉灵兽发生进化！额外获得加成！" : "";
           const diagMsg = diagnosisCorrect ? " 🔍诊断正确！" : "";
-          get().addNotification("success", `治愈成功！获得 ${revenue} 金，声望+${repGain}，亲密度+${trustGain}${diagMsg}${evolveMsg}`);
+          const synergyMsg = pairBonus > 0 ? ` 🤝搭档默契+${pairBonus}%` : "";
+          get().addNotification("success", `治愈成功！获得 ${revenue} 金，声望+${repGain}，亲密度+${trustGain}${diagMsg}${evolveMsg}${synergyMsg}`);
         } else if (bed.result === "fail" && beast) {
           const penaltyMoney = Math.floor(s.money * 0.05) + 20;
           const penaltyRep = 5;
@@ -438,18 +760,27 @@ export const useGameStore = create<GameState>()(
             money: Math.max(0, st.money - penaltyMoney),
             reputation: Math.max(0, st.reputation - penaltyRep),
             medicalRecords: [record, ...st.medicalRecords],
+            staffPairs: newStaffPairs,
+            staffBreedExp: newStaffBreedExp,
+            staffDiseaseExp: newStaffDiseaseExp,
           }));
           get()._addTransaction("expense", "误诊赔偿", penaltyMoney, `${breedName}·${beast.name} 治疗失败赔偿`);
           const realDiseaseName = DISEASE_NAMES[beast.disease];
           get().addNotification("error", `治疗失败！确诊为「${realDiseaseName}」。赔偿 ${penaltyMoney} 金，声望-${penaltyRep}`);
+        } else {
+          set({
+            staffPairs: newStaffPairs,
+            staffBreedExp: newStaffBreedExp,
+            staffDiseaseExp: newStaffDiseaseExp,
+          });
         }
 
-        // Release staff & bed
         const newBeds = s.beds.map(b => b.id === bedId ? {
           ...b,
           status: "empty" as const,
           assignedBeastId: null,
           assignedStaffId: null,
+          assignedStaffIds: [],
           treatmentProgress: 0,
           treatmentTotal: 0,
           result: "pending" as const,
@@ -458,8 +789,7 @@ export const useGameStore = create<GameState>()(
           startedAt: null,
           beastSnapshot: null,
         } : b);
-        const staffToRelease = bed.assignedStaffId;
-        const newStaff = s.staff.map(st => st.id === staffToRelease ? {
+        const newStaff = s.staff.map(st => treatedStaffIds.includes(st.id) ? {
           ...st, status: "idle" as const, assignedBedId: null,
         } : st);
 
@@ -472,7 +802,6 @@ export const useGameStore = create<GameState>()(
         const day = s.currentDay;
         const newWeather = rand(WEATHERS);
 
-        // 天气事件
         let eventMsg = "";
         let bonusMoney = 0;
         if (newWeather === "misty") { bonusMoney = -20; eventMsg = "大雾天气，客人稀少。"; }
@@ -481,11 +810,33 @@ export const useGameStore = create<GameState>()(
 
         const newRelStaff = s.staff.map(st => {
           const isAssignedToActiveBed = s.beds.some(b =>
-            b.status === "occupied" && b.result === "pending" && b.assignedStaffId === st.id
+            b.status === "occupied" && b.result === "pending" && b.assignedStaffIds.includes(st.id)
           );
           if (isAssignedToActiveBed) return st;
           return { ...st, status: "idle" as const, assignedBedId: null };
         });
+
+        const newPairs: Record<string, StaffPairRecord> = {};
+        let fatigueWarning = "";
+        for (const key of Object.keys(s.staffPairs)) {
+          const pair = s.staffPairs[key];
+          const workedToday = pair.lastTreatedAt === day;
+          const newFatigue = workedToday ? pair.fatigue : Math.max(0, pair.fatigue - 2);
+          const newConsec = workedToday ? pair.consecutiveDays : 0;
+          if (newFatigue >= 6 && workedToday) {
+            const a = s.staff.find(x => x.id === pair.staffAId)?.name || "?";
+            const b = s.staff.find(x => x.id === pair.staffBId)?.name || "?";
+            fatigueWarning += ` ⚠️${a}&${b}疲劳值${newFatigue}`;
+          }
+          newPairs[key] = {
+            ...pair,
+            fatigue: newFatigue,
+            consecutiveDays: newConsec,
+            synergyTags: pair.synergyTags || [],
+            breedExperience: pair.breedExperience || {},
+            diseaseExperience: pair.diseaseExperience || ({} as Record<DiseaseType, number>),
+          };
+        }
 
         set(st => ({
           currentDay: day + 1,
@@ -494,6 +845,7 @@ export const useGameStore = create<GameState>()(
           staff: newRelStaff,
           money: Math.max(0, st.money - totalWage + bonusMoney),
           lastBeastSpawn: 8,
+          staffPairs: newPairs,
         }));
         get()._addTransaction("expense", "员工工资", totalWage, `第${day}天员工薪资`);
         if (bonusMoney !== 0) {
@@ -504,7 +856,7 @@ export const useGameStore = create<GameState>()(
             `第${day}天结算：${eventMsg} (${bonusMoney >= 0 ? "+" : ""}${bonusMoney}金)`
           );
         }
-        get().addNotification("info", `=== 第${day}天结算 === 支付薪资${totalWage}金。${eventMsg} 新的一天开始啦！`);
+        get().addNotification("info", `=== 第${day}天结算 === 支付薪资${totalWage}金。${eventMsg}${fatigueWarning} 新的一天开始啦！`);
       },
 
       resetGame: () => {
@@ -548,7 +900,10 @@ export const useGameStore = create<GameState>()(
           // 2. 治疗进度
           const newBeds = state.beds.map(b => {
             if (b.status !== "occupied" || b.result !== "pending") return b;
-            const staffBonus = b.assignedStaffId ? 1.3 : 1;
+            const staffCount = (b.assignedStaffIds?.length ?? 0) + (b.assignedStaffId ? 1 : 0) - (b.assignedStaffIds?.includes(b.assignedStaffId!) ? 1 : 0);
+            const effectiveStaffCount = b.assignedStaffIds?.length ?? (b.assignedStaffId ? 1 : 0);
+            const staffBonus = effectiveStaffCount === 0 ? 1 : effectiveStaffCount === 1 ? 1.3 : 1.55;
+            void staffCount;
             const newProgress = b.treatmentProgress + staffBonus;
             let result: TreatmentResult = b.result;
             if (newProgress >= b.treatmentTotal) {
@@ -558,11 +913,34 @@ export const useGameStore = create<GameState>()(
                 JSON.stringify([...p.herbIds].sort()) === JSON.stringify([...herbs].sort())
               );
               let finalRate = matchedPresc ? matchedPresc.successRate : 30;
-              // 员工加成
-              if (b.assignedStaffId) {
-                const stf = state.staff.find(x => x.id === b.assignedStaffId);
+
+              const workingStaffIds = b.assignedStaffIds?.length > 0 ? b.assignedStaffIds : (b.assignedStaffId ? [b.assignedStaffId] : []);
+              for (const sid of workingStaffIds) {
+                const stf = state.staff.find(x => x.id === sid);
                 finalRate += (stf?.skillLevel ?? 1) * 5;
               }
+
+              // 搭档默契加成 & 疲劳冲突
+              if (workingStaffIds.length >= 2) {
+                const beastSeverity = b.beastSnapshot?.severity ?? "mild";
+                const isHighDifficulty = beastSeverity === "severe" || beastSeverity === "critical";
+                for (let i = 0; i < workingStaffIds.length; i++) {
+                  for (let j = i + 1; j < workingStaffIds.length; j++) {
+                    const pid = getPairId(workingStaffIds[i], workingStaffIds[j]);
+                    const pair = state.staffPairs[pid];
+                    if (pair) {
+                      const baseBonus = getSynergyBonus(pair.synergyPoints);
+                      finalRate += baseBonus;
+                      if (isHighDifficulty) {
+                        finalRate += Math.floor(baseBonus * 0.5);
+                      }
+                      finalRate += getFatiguePenalty(pair.fatigue);
+                      finalRate += getSynergyTagBonus(pair.synergyTags);
+                    }
+                  }
+                }
+              }
+
               // 疾病严重度减成
               const sev = b.beastSnapshot?.severity ?? "mild";
               const sevDebuff = { mild: 0, moderate: -5, severe: -10, critical: -15 }[sev] || 0;

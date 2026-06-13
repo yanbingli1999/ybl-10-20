@@ -30,7 +30,8 @@ export function BedGrid({ onBedClick }: BedGridProps) {
           const isEmpty = bed.status === "empty";
           const snapshot = bed.beastSnapshot;
           const breed = snapshot ? BREEDS.find(b => b.id === snapshot.breedId) : null;
-          const assignedStaff = bed.assignedStaffId ? staff.find(s => s.id === bed.assignedStaffId) : null;
+          const assignedStaffIds = bed.assignedStaffIds?.length > 0 ? bed.assignedStaffIds : (bed.assignedStaffId ? [bed.assignedStaffId] : []);
+          const assignedStaffList = assignedStaffIds.map(id => staff.find(s => s.id === id)).filter(Boolean);
           const progress = bed.treatmentTotal > 0 ? (bed.treatmentProgress / bed.treatmentTotal) * 100 : 0;
           const herbsUsed = bed.currentPrescriptionHerbs.map(id => {
             const h = HERBS.find(x => x.id === id);
@@ -129,12 +130,14 @@ export function BedGrid({ onBedClick }: BedGridProps) {
                       <div className="text-[10px] text-gray-500 truncate">
                         💊 {herbsUsed.join(" ")}
                       </div>
-                      <div className="flex items-center gap-1 text-[10px] text-gray-500">
-                        {assignedStaff ? (
-                          <span className="flex items-center gap-0.5 bg-clinic-light-jade/10 px-1.5 rounded">
-                            <UserPlus className="w-3 h-3" />
-                            {assignedStaff.emoji} {assignedStaff.name}
-                          </span>
+                      <div className="flex items-center gap-1 text-[10px] text-gray-500 flex-wrap">
+                        {assignedStaffList.length > 0 ? (
+                          assignedStaffList.map((s, idx) => (
+                            <span key={s!.id} className="flex items-center gap-0.5 bg-clinic-light-jade/10 px-1.5 rounded">
+                              {idx === 0 && <UserPlus className="w-3 h-3" />}
+                              {s!.emoji} {s!.name}
+                            </span>
+                          ))
                         ) : (
                           <span className="text-gray-400 italic">未分配护理员</span>
                         )}

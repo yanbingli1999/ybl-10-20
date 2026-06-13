@@ -78,12 +78,54 @@ export interface Staff {
   dailyWage: number;
 }
 
+export type PairSynergyLevel = "stranger" | "acquaintance" | "partner" | "veteran" | "legend";
+
+export interface SynergyTag {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  rarity: "common" | "rare" | "epic" | "legendary";
+  bonus: number;
+}
+
+export interface StaffPairRecord {
+  pairId: string;
+  staffAId: string;
+  staffBId: string;
+  totalTreatments: number;
+  successfulTreatments: number;
+  consecutiveDays: number;
+  fatigue: number;
+  synergyLevel: PairSynergyLevel;
+  synergyPoints: number;
+  adaptedDiseases: DiseaseType[];
+  adaptedBreeds: string[];
+  synergyTags: string[];
+  breedExperience: Record<string, number>;
+  diseaseExperience: Record<DiseaseType, number>;
+  lastTreatedAt: number;
+}
+
+export interface StaffBreedExperience {
+  breedId: string;
+  treatments: number;
+  successes: number;
+}
+
+export interface StaffDiseaseExperience {
+  disease: DiseaseType;
+  treatments: number;
+  successes: number;
+}
+
 export interface Bed {
   id: string;
   name: string;
   status: BedStatus;
   assignedBeastId: string | null;
   assignedStaffId: string | null;
+  assignedStaffIds: string[];
   treatmentProgress: number;
   treatmentTotal: number;
   result: TreatmentResult;
